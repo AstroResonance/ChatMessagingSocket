@@ -1,0 +1,3 @@
+/cygdrive/c/Users/lolfa/CLionProjects/ChatMessagingSocket/cmake-build-debug/CMakeFiles/ChatMessagingSocket.dir
+/cygdrive/c/Users/lolfa/CLionProjects/ChatMessagingSocket/cmake-build-debug/CMakeFiles/edit_cache.dir
+/cygdrive/c/Users/lolfa/CLionProjects/ChatMessagingSocket/cmake-build-debug/CMakeFiles/rebuild_cache.dir
