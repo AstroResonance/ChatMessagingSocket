@@ -380,10 +380,8 @@ void removeUserFromFile(const std::string& filename, const std::string& username
  * Parameters: The file descriptor, and the Address of the client.
 */
 void handleClient(int newsockfd, struct sockaddr_storage cliaddr) {
-    // Declaration of the data length, message size, and if the user exited
     int datalen;
     char mesg[BUF_SIZE];
-    bool user_exited = false;
 
     while ((datalen = recv(newsockfd, mesg, BUF_SIZE, 0)) > 0) {
         mesg[datalen] = '\0';  // Null-terminate the message
@@ -395,44 +393,45 @@ void handleClient(int newsockfd, struct sockaddr_storage cliaddr) {
             memset(mesg, 0, BUF_SIZE);  // Clear the buffer
             continue; // Ignore empty or whitespace-only messages
         }
-        // If the command is REG, do registration
+
+        // If the command is REG, perform registration
         if (strncmp(mesg, "REG ", 4) == 0) {
             registration(mesg, newsockfd, cliaddr);
         }
-        // If the command is MESG, get the username, content, and broadcast it
+            // If the command is MESG, get the username, content, and broadcast it
         else if (strncmp(mesg, "MESG ", 5) == 0) {
             std::string sender_username = client_usernames[newsockfd];
-            // Remove "MESG " from the message
-            std::string message_content = mesg + 5;
-            // Trim the message content
-            message_content = trim(message_content);
-            // Send the message to all other clients
+            std::string message_content = trim(mesg + 5);
             broadcastMESG(message_content, newsockfd, sender_username);
         }
-        // If the command is PMSG, get the username, content, and send it to the recipient
+            // If the command is PMSG, handle private messaging
         else if(strncmp(mesg, "PMSG ", 5) == 0){
             std::string sender_username = client_usernames[newsockfd];
-            std::string rest_of_message = mesg + 5;
-            rest_of_message = trim(rest_of_message);
+            std::string rest_of_message = trim(mesg + 5);
 
-            // Find the first space after the recipient username
             size_t space_pos = rest_of_message.find(' ');
             if (space_pos == std::string::npos) {
-                // Invalid format, send error
                 std::string UnknownError = "ERR 4\n";
                 send(newsockfd, UnknownError.c_str(), UnknownError.size(), 0);
                 continue;
             }
 
             std::string recipient_username = rest_of_message.substr(0, space_pos);
-            std::string message_content = rest_of_message.substr(space_pos + 1);
-            message_content = trim(message_content);
+            std::string message_content = trim(rest_of_message.substr(space_pos + 1));
 
             sendPrivateMessage(recipient_username, message_content, newsockfd, sender_username);
         }
-        // If the message is just EXIT, then get the username from the client, remove the user information, and close the socket
-        else if(trimmed_message == "EXIT"){
+            // If the message is EXIT, handle the user exit
+        else if(trimmed_message == "EXIT") {
             std::string username = client_usernames[newsockfd];
+
+            // Remove the user from REGISTERED_USERS file
+            removeUserFromFile("REGISTERED_USERS", username);
+
+            // Notify other users that the user has left
+            std::string leave_message = username + " has left the chat.\n";
+            broadcastToAll(leave_message);
+
 
 
 
@@ -443,57 +442,47 @@ void handleClient(int newsockfd, struct sockaddr_storage cliaddr) {
                 client_usernames.erase(newsockfd);
                 usernames.erase(std::remove(usernames.begin(), usernames.end(), username), usernames.end());
             }
-
+            //Send the user list after the client credentials have been removed
             sendUserList(newsockfd);
-
-
-            // Send a message to the user confirming they have exited
-            std::string exit_message = "You have exited the chat.\n";
-            send(newsockfd, exit_message.c_str(), exit_message.size(), 0);
-
-            // Notify other users that the user has left
-            std::string leave_message = username + " has left the chat.\n";
-            broadcastToAll(leave_message);
-
-            // Remove the user from REGISTERED_USERS file
-            removeUserFromFile("REGISTERED_USERS", username);
-
-            // Close the socket
+            // Close the socket and exit the function
             close(newsockfd);
-
-            user_exited = true;
-
-            // Break the loop to end the thread
-            break;
-
+            return;
         }
-        // Otherwise give an unknown format error
-        else{
+            // Unknown command handling
+        else {
             std::string UnknownError = "ERR 4\n";
             send(newsockfd, UnknownError.c_str(), UnknownError.size(), 0);
-            memset(mesg, 0, BUF_SIZE);
-            continue;
         }
-        // Clear the buffer to prevent garbled messages
+        // Clear the buffer for the next message
         memset(mesg, 0, BUF_SIZE);
     }
+
+    // If the loop exits due to a sudden disconnect (recv() returns 0 or negative value)
     if (datalen < 0) {
         std::cerr << "Error receiving from client" << std::endl;
     }
-    std::string disconnected_username = client_usernames[newsockfd];
-    {
-        // Lock Mutex
-        std::lock_guard<std::mutex> lock(reg_users_mutex);
-        // Erase the client information
-        connected_clients.erase(std::remove(connected_clients.begin(), connected_clients.end(), newsockfd), connected_clients.end());
-        client_usernames.erase(newsockfd);
-        usernames.erase(std::remove(usernames.begin(), usernames.end(), disconnected_username), usernames.end());
+    else if(datalen == 0){
+        // Handle the disconnection:
+        std::string disconnected_username = client_usernames[newsockfd];
+
+        // Notify other users that the user has left
+        std::string leave_message = disconnected_username + " has left the chat.\n";
+        broadcastToAll(leave_message);
+
+        // Lock the mutex and clean up the client's data from the server
+        {
+            std::lock_guard<std::mutex> lock(reg_users_mutex);
+            connected_clients.erase(std::remove(connected_clients.begin(), connected_clients.end(), newsockfd), connected_clients.end());
+            client_usernames.erase(newsockfd);
+            usernames.erase(std::remove(usernames.begin(), usernames.end(), disconnected_username), usernames.end());
+        }
+
+        // Remove the user from REGISTERED_USERS file
+        removeUserFromFile("REGISTERED_USERS", disconnected_username);
+
+        // Close the socket for the disconnected client
+        close(newsockfd);
     }
-    // Broadcast to other clients that the user has left
-    std::string leave_message = disconnected_username + " has left the chat.\n";
-    broadcastToAll(leave_message);
-    // Close the socket for the client leaving
-    close(newsockfd);
 }
 
 /*
